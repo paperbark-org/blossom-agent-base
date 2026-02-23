@@ -1,0 +1,12 @@
+{
+  "id": "blossom-tools",
+  "name": "Blossom Tools",
+  "version": "0.1.0",
+  "description": "Creator search and shortlist management tools for Blossom",
+  "entry": "index.ts",
+  "configSchema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  }
+}

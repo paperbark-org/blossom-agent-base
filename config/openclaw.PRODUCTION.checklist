@@ -1,0 +1,41 @@
+# Production Hardening Checklist for GCP Deployment
+
+BEFORE deploying to GCP, revert ALL `_PRODUCTION_RESTORE_*` fields in openclaw.json.
+Look for every key starting with `_PRODUCTION_RESTORE_` — each one tells you what to change.
+
+## Quick Revert Summary
+
+### 1. Gateway Auth (CRITICAL)
+  "auth": {
+    "mode": "token",
+    "token": "<run: openssl rand -hex 32>"
+  }
+Store the token in GCP Secret Manager, inject via OPENCLAW_GATEWAY_TOKEN env var.
+
+### 2. Tool Restrictions (CRITICAL)
+Restore the original allow/deny lists:
+  allow: creator_search, creator_get, instagram_creator_fetch,
+         shortlist_list, shortlist_add, shortlist_remove,
+         web_search, web_fetch
+  deny:  exec, process, write, edit, Read, browser, nodes, cron,
+         gateway, message, tts, canvas, image, sessions_spawn,
+         sessions_send, sessions_list, sessions_history,
+         session_status, memory_search, memory_get, agents_list
+
+### 3. Exec Policy (CRITICAL)
+  "exec": { "security": "deny", "ask": "always" }
+
+### 4. Cleanup
+- Delete _DANGER_DEV_MODE key
+- Delete all _PRODUCTION_RESTORE_* keys
+
+### 5. Infrastructure
+- [ ] Caddy/nginx reverse proxy with TLS
+- [ ] GCP firewall: only 443 + SSH from your IP
+- [ ] All secrets in GCP Secret Manager
+- [ ] Persistent disk backup snapshots
+- [ ] bind stays "loopback"
+
+### 6. Original Dev Token (DO NOT reuse in production)
+12b668f92a38f45dffecdf1b50ecd7804e1103f08baea69d
+Generate a new one: openssl rand -hex 32

@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "jobs": [
+    {
+      "id": "19e353ea-b794-4cd2-8265-79576a17ca82",
+      "agentId": "blossom",
+      "sessionKey": "agent:blossom:main",
+      "name": "mia_new_post_watcher",
+      "enabled": true,
+      "createdAtMs": 1771549331562,
+      "updatedAtMs": 1771807602295,
+      "schedule": {
+        "kind": "every",
+        "everyMs": 1800000,
+        "anchorMs": 1771549331562
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "now",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "You are Blossom. Check if @mialangleyhair has posted anything new on Instagram since we last checked.\n\nState file: /Users/elisimicrobertson/.openclaw/workspace/tools/mia_watch_state.json\n\nSteps:\n1. Read the state file to get last_known_post_id and user_id.\n2. Run this Python snippet to fetch her latest post:\n\n```python\nimport json, os, urllib.request\nHIKER_HEADERS = {\"x-access-key\": os.environ[\"HIKER_API_KEY\"], \"accept\": \"application/json\", \"User-Agent\": \"curl/7.88.1\"}\ndef hiker_get(path, params):\n    query = \"&\".join(f\"{k}={v}\" for k, v in params.items())\n    req = urllib.request.Request(f\"https://api.hikerapi.com{path}?{query}\", headers=HIKER_HEADERS)\n    with urllib.request.urlopen(req, timeout=30) as r: return json.loads(r.read())\nresp = hiker_get(\"/v1/user/medias/chunk\", {\"user_id\": \"44205587480\"})\nitems = resp if isinstance(resp, list) else resp.get(\"items\", [])\nif isinstance(items, list) and items and isinstance(items[0], list): items = items[0]\nlatest = items[0] if items else None\nif latest:\n    print(json.dumps({\"post_id\": str(latest.get(\"pk\") or latest.get(\"id\",\"\")), \"taken_at\": latest.get(\"taken_at_ts\"), \"likes\": latest.get(\"like_count\",0), \"comments\": latest.get(\"comment_count\",0), \"caption\": str(latest.get(\"caption\") or \"\")[:200]}))\n```\n\n3. Compare the returned post_id to last_known_post_id from the state file.\n\n4a. If NO new post: respond with NO_REPLY and stop. Do nothing else.\n\n4b. If NEW post detected:\n   - Update last_known_post_id in the state file with the new post_id.\n   - Run: python3 /Users/elisimicrobertson/.openclaw/workspace/tools/creator_audit.py mialangleyhair --tier 1\n   - Use sessions_send to notify Oreo in the main session (sessionKey: agent:blossom:main) with: '🌸 Mia just posted! Here are the quick Tier 1 numbers:' followed by ROI score, engagement rate, and a note that --tier 2 is available for deeper analysis.",
+        "timeoutSeconds": 120
+      },
+      "delivery": {
+        "mode": "none"
+      },
+      "state": {
+        "nextRunAtMs": 1771811202295,
+        "lastRunAtMs": 1771807602124,
+        "lastStatus": "error",
+        "lastDurationMs": 171,
+        "consecutiveErrors": 14,
+        "lastError": "Error: Unknown model: anthropic/claude-sonnet-4-6"
+      }
+    }
+  ]
+}

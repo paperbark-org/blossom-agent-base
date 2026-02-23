@@ -1,0 +1,99 @@
+{
+  "meta": {
+    "lastTouchedVersion": "2026.2.18",
+    "lastTouchedAt": "2026-02-19T03:03:26.524Z"
+  },
+  "wizard": {
+    "lastRunAt": "2026-02-19T03:03:26.476Z",
+    "lastRunVersion": "2026.2.18",
+    "lastRunCommand": "onboard",
+    "lastRunMode": "local"
+  },
+  "auth": {
+    "profiles": {
+      "anthropic:default": {
+        "provider": "anthropic",
+        "mode": "api_key"
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "anthropic/claude-sonnet-4-5",
+        "fallbacks": [
+          "anthropic/claude-haiku-4-5"
+        ]
+      },
+      "workspace": "${HOME}/.openclaw/workspace"
+    },
+    "list": [
+      {
+        "id": "blossom",
+        "default": true,
+        "name": "Blossom",
+        "workspace": "${HOME}/.openclaw/workspace",
+        "sandbox": {
+"mode": "off"
+        },
+        "tools": {
+          "allow": ["*"],
+          "deny": []
+        }
+      }
+    ]
+  },
+  "tools": {
+    "exec": {
+      "security": "full",
+      "ask": "off"
+    },
+    "web": {
+      "search": {
+        "enabled": true,
+        "provider": "brave"
+      }
+    }
+  },
+  "commands": {
+    "native": "auto",
+    "nativeSkills": "auto"
+  },
+  "hooks": {
+    "internal": {
+      "enabled": true,
+      "entries": {
+        "session-memory": {
+          "enabled": true
+        }
+      }
+    }
+  },
+  "gateway": {
+    "port": 18789,
+    "mode": "local",
+    "bind": "loopback",
+    "auth": {
+      "mode": "token",
+      "token": "${OPENCLAW_GATEWAY_TOKEN}"
+    },
+    "controlUi": {
+      "allowedOrigins": ["http://localhost:3000", "http://localhost:3001"],
+      "allowInsecureAuth": true
+    },
+    "tailscale": {
+      "mode": "off",
+      "resetOnExit": false
+    },
+    "http": {
+      "endpoints": {
+        "chatCompletions": {
+          "enabled": true
+        }
+      }
+    }
+  },
+  "plugins": {
+    "enabled": true
+  }
+}
