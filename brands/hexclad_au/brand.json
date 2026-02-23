@@ -1,0 +1,16 @@
+{
+  "brand_id": "hexclad_au",
+  "display_name": "HexClad Australia",
+  "agent_id": "blossom",
+  "agent_name": "Blossom",
+  "region": "AU",
+  "mongodb_database": "blossom_hexclad_au",
+  "deploy_target": {
+    "staging": "blossomclaw-staging",
+    "production": null
+  },
+  "env_overrides": {
+    "BLOSSOM_BRAND_ID": "hexclad_au",
+    "BLOSSOM_BRAND_NAME": "HexClad Australia"
+  }
+}
