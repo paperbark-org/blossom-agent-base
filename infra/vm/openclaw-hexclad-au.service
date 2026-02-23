@@ -1,0 +1,22 @@
+# OpenClaw Gateway — HexClad AU
+# Install: sudo cp openclaw-hexclad-au.service /etc/systemd/system/
+#          sudo systemctl daemon-reload
+#          sudo systemctl enable --now openclaw-hexclad-au
+
+[Unit]
+Description=OpenClaw Gateway - HexClad AU
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hexclad_au
+Group=hexclad_au
+WorkingDirectory=/home/hexclad_au
+ExecStart=/usr/local/bin/openclaw gateway start
+Restart=on-failure
+RestartSec=5
+Environment=HOME=/home/hexclad_au
+
+[Install]
+WantedBy=multi-user.target

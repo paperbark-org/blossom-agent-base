@@ -5,6 +5,7 @@ on:
     branches:
       - staging
       - main
+      - hexclad_au
 
 env:
   PROJECT_ID: gen-lang-client-0112051341
@@ -35,13 +36,65 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set target instance
+      - name: Configure deployment target
         run: |
-          if [[ "${{ github.ref_name }}" == "main" ]]; then
-            echo "INSTANCE=blossomclaw-production" >> $GITHUB_ENV
-          else
-            echo "INSTANCE=blossomclaw-staging" >> $GITHUB_ENV
+          BRANCH="${{ github.ref_name }}"
+          case "$BRANCH" in
+            main)
+              echo "INSTANCE=blossomclaw-production" >> $GITHUB_ENV
+              echo "DEPLOY_USER=" >> $GITHUB_ENV
+              echo "DEPLOY_PORT=18789" >> $GITHUB_ENV
+              echo "BRAND=" >> $GITHUB_ENV
+              ;;
+            hexclad_au)
+              echo "INSTANCE=blossomclaw-staging" >> $GITHUB_ENV
+              echo "DEPLOY_USER=hexclad_au" >> $GITHUB_ENV
+              echo "DEPLOY_PORT=18790" >> $GITHUB_ENV
+              echo "BRAND=hexclad_au" >> $GITHUB_ENV
+              ;;
+            *)
+              echo "INSTANCE=blossomclaw-staging" >> $GITHUB_ENV
+              echo "DEPLOY_USER=" >> $GITHUB_ENV
+              echo "DEPLOY_PORT=18789" >> $GITHUB_ENV
+              echo "BRAND=" >> $GITHUB_ENV
+              ;;
+          esac
+
+      - name: Apply brand overlay
+        if: ${{ env.BRAND }}
+        run: |
+          if [ -d "brands/${{ env.BRAND }}/workspace" ]; then
+            cp -r "brands/${{ env.BRAND }}/workspace/." config/workspace/
+            echo "Applied workspace overlay from brands/${{ env.BRAND }}"
           fi
+
+      - name: Patch gateway port
+        if: ${{ env.BRAND }}
+        run: |
+          python3 -c "
+          import json
+          with open('config/openclaw.json') as f:
+              cfg = json.load(f)
+          cfg['gateway']['port'] = ${{ env.DEPLOY_PORT }}
+          with open('config/openclaw.json', 'w') as f:
+              json.dump(cfg, f, indent=2)
+              f.write('\n')
+          "
+
+      - name: Strip runtime state from config
+        run: |
+          # Remove cron job runtime state (nextRunAtMs, lastStatus, etc.)
+          # so deploys don't overwrite live scheduling state
+          python3 -c "
+          import json
+          with open('config/cron/jobs.json') as f:
+              data = json.load(f)
+          for job in data.get('jobs', []):
+              job.pop('state', None)
+          with open('config/cron/jobs.json', 'w') as f:
+              json.dump(data, f, indent=2)
+              f.write('\n')
+          "
 
       - uses: google-github-actions/auth@v2
         with:
@@ -54,27 +107,86 @@ jobs:
 
       - name: Package and deploy
         run: |
-          tar czf /tmp/openclaw-deploy.tar.gz -C config .
+          # Create tarball, excluding runtime state directories
+          tar czf /tmp/openclaw-deploy.tar.gz \
+            --exclude='./workspace/memory' \
+            -C config .
 
-          gcloud compute scp /tmp/openclaw-deploy.tar.gz \
-            ${{ env.INSTANCE }}:/tmp/openclaw-deploy.tar.gz \
+          # Generate deploy script (avoids shell escaping issues in gcloud ssh)
+          cat > /tmp/deploy.sh << 'SCRIPT'
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          DEPLOY_USER="$1"
+          BRAND="$2"
+
+          if [ -n "${DEPLOY_USER}" ]; then
+            OPENCLAW_DIR="/home/${DEPLOY_USER}/.openclaw"
+            RUN="sudo -u ${DEPLOY_USER}"
+          else
+            OPENCLAW_DIR="$HOME/.openclaw"
+            RUN=""
+          fi
+
+          # Backup current config
+          ${RUN} cp "${OPENCLAW_DIR}/openclaw.json" \
+            "${OPENCLAW_DIR}/openclaw.json.bak.$(date +%s)" 2>/dev/null || true
+
+          # Extract new config (does not delete existing files not in archive)
+          ${RUN} tar xzf /tmp/openclaw-deploy.tar.gz -C "${OPENCLAW_DIR}"
+
+          # Read env vars for variable substitution in openclaw.json
+          ENV_FILE="${OPENCLAW_DIR}/.env"
+          if ${RUN} test -f "${ENV_FILE}" 2>/dev/null; then
+            # Safe line-by-line parsing: only export KEY=VALUE lines, skip comments/empty
+            while IFS='=' read -r key value; do
+              key="$(echo "${key}" | xargs)"
+              [[ -z "${key}" || "${key}" == \#* ]] && continue
+              export "${key}=${value}"
+            done < <(${RUN} cat "${ENV_FILE}")
+          fi
+
+          # Validate required env vars
+          if [ -z "${OPENCLAW_GATEWAY_TOKEN:-}" ]; then
+            echo "ERROR: OPENCLAW_GATEWAY_TOKEN not set in ${ENV_FILE}" >&2
+            exit 1
+          fi
+
+          # Substitute placeholders in openclaw.json using python for safety
+          # (sed breaks if token contains regex special chars)
+          TARGET_HOME="${OPENCLAW_DIR%/.openclaw}"
+          ${RUN} python3 -c "
+          import sys
+          with open('${OPENCLAW_DIR}/openclaw.json') as f:
+              content = f.read()
+          content = content.replace('\${HOME}', sys.argv[1])
+          content = content.replace('\${OPENCLAW_GATEWAY_TOKEN}', sys.argv[2])
+          with open('${OPENCLAW_DIR}/openclaw.json', 'w') as f:
+              f.write(content)
+          " "${TARGET_HOME}" "${OPENCLAW_GATEWAY_TOKEN}"
+
+          # Restart the appropriate service
+          if [ -n "${DEPLOY_USER}" ]; then
+            BRAND_SLUG="${BRAND//_/-}"
+            sudo systemctl restart "openclaw-${BRAND_SLUG}"
+          else
+            if command -v openclaw &>/dev/null; then
+              openclaw gateway restart 2>/dev/null || echo 'Restart signal sent'
+            fi
+          fi
+
+          rm -f /tmp/openclaw-deploy.tar.gz /tmp/deploy.sh
+          echo "Deploy complete: ${BRAND:-default} on ${OPENCLAW_DIR}"
+          SCRIPT
+
+          chmod +x /tmp/deploy.sh
+
+          # Transfer tarball and deploy script to instance
+          gcloud compute scp /tmp/openclaw-deploy.tar.gz /tmp/deploy.sh \
+            ${{ env.INSTANCE }}:/tmp/ \
             --zone=${{ env.ZONE }}
 
+          # Execute deploy
           gcloud compute ssh ${{ env.INSTANCE }} \
             --zone=${{ env.ZONE }} \
-            --command="
-              set -euo pipefail
-              OPENCLAW_DIR=\$HOME/.openclaw
-              cp \${OPENCLAW_DIR}/openclaw.json \${OPENCLAW_DIR}/openclaw.json.bak.\$(date +%s) 2>/dev/null || true
-              tar xzf /tmp/openclaw-deploy.tar.gz -C \${OPENCLAW_DIR}
-              if [ -f \${OPENCLAW_DIR}/.env ]; then
-                set -a && source \${OPENCLAW_DIR}/.env && set +a
-              fi
-              sed -i \"s|\\\${HOME}|\${HOME}|g\" \${OPENCLAW_DIR}/openclaw.json
-              sed -i \"s|\\\${OPENCLAW_GATEWAY_TOKEN}|\${OPENCLAW_GATEWAY_TOKEN}|g\" \${OPENCLAW_DIR}/openclaw.json
-              if command -v openclaw &>/dev/null; then
-                openclaw gateway restart 2>/dev/null || echo 'Restart signal sent'
-              fi
-              rm -f /tmp/openclaw-deploy.tar.gz
-              echo 'Deploy complete'
-            "
+            --command="bash /tmp/deploy.sh '${{ env.DEPLOY_USER }}' '${{ env.BRAND }}'"

@@ -7,11 +7,14 @@ OpenClaw gateway configuration for the Blossom platform. This repo version-contr
 ## System Architecture
 
 ```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│ blossom-frontend│────▶│ blossom-agent-base│────▶│ blossom-backend │
-│ (Next.js/Vercel)│     │ (OpenClaw on GCP) │     │ (FastAPI on GCP)│
-└─────────────────┘     └──────────────────┘     └─────────────────┘
+┌─────────────────┐     ┌──────────────────────────────────────────┐     ┌─────────────────┐
+│ blossom-frontend│────▶│  blossomclaw-staging VM                  │────▶│ blossom-backend │
+│ (Next.js/Vercel)│     │  ├─ default user :18789 → Blossom        │     │ (FastAPI on GCP)│
+│                 │     │  └─ hexclad_au   :18790 → HexClad AU     │     │                 │
+└─────────────────┘     └──────────────────────────────────────────┘     └─────────────────┘
 ```
+
+Each brand runs as an isolated OpenClaw process under its own Linux user on a dedicated port. One VM, zero extra infra cost.
 
 | Repo | Purpose | Deployed to |
 |------|---------|-------------|
@@ -43,48 +46,69 @@ config/                         # Maps to ~/.openclaw/ on the instance
 ├── cron/                       # Scheduled jobs
 ├── canvas/                     # Canvas UI
 └── completions/                # Shell completions
+brands/                         # Per-brand overrides
+└── hexclad_au/
+    ├── brand.json              # Brand metadata (id, region, deploy target)
+    ├── .env.example            # Required secrets for this brand
+    └── workspace/
+        └── USER.md             # Brand context overlaid onto config/workspace/
+infra/vm/                       # VM setup templates (manual one-time install)
+├── openclaw-hexclad-au.service # systemd unit for HexClad AU process
+├── hexclad-deploy.sudoers      # Sudoers rules for CI deploy
+└── setup-hexclad-au.sh         # Automated VM setup script
 ```
 
 ## Infrastructure
 
-- **Staging instance**: `blossomclaw-staging` (australia-southeast1-b, e2-medium)
+- **Staging VM**: `blossomclaw-staging` (australia-southeast1-b, e2-medium)
 - **GCP Project**: gen-lang-client-0112051341
-- **CI/CD**: GitHub Actions deploys `config/` to `~/.openclaw/` on push
+- **CI/CD**: GitHub Actions deploys `config/` to the target user's `~/.openclaw/` on push
+
+### Brand Instances
+
+| Brand | Linux User | Port | Branch | systemd Service |
+|-------|-----------|------|--------|-----------------|
+| Blossom (default) | default SSH user | 18789 | `staging` / `main` | — (managed by openclaw) |
+| HexClad AU | `hexclad_au` | 18790 | `hexclad_au` | `openclaw-hexclad-au` |
+
+Each brand instance has full process isolation: separate Linux user, home directory, `.openclaw/` config, `.env` secrets, and port. The deploy workflow routes branches to the correct user/port automatically.
 
 ## Local Development
 
 ```bash
-# SSH tunnel to the remote gateway
+# SSH tunnel to the default Blossom gateway
 gcloud compute ssh blossomclaw-staging \
   --zone=australia-southeast1-b \
   -- -L 18789:127.0.0.1:18789 -N
 
-# Gateway is now accessible at http://127.0.0.1:18789
+# SSH tunnel to the HexClad AU gateway
+gcloud compute ssh blossomclaw-staging \
+  --zone=australia-southeast1-b \
+  -- -L 18790:127.0.0.1:18790 -N
+
+# Both gateways accessible at http://127.0.0.1:<port>
 ```
 
 ## Deployment
 
-Push to `staging` triggers CI/CD that:
-1. Packages `config/` as a tarball
-2. SCPs to the GCP instance
-3. Extracts to `~/.openclaw/`
-4. Substitutes `${OPENCLAW_GATEWAY_TOKEN}` and `${HOME}` placeholders
-5. Restarts the gateway
+Push to a branch triggers CI/CD that:
+1. Detects the target brand from the branch name (`staging`/`main` = default, `hexclad_au` = HexClad AU)
+2. Applies brand workspace overlay (copies `brands/<brand>/workspace/*` over `config/workspace/`)
+3. Patches `openclaw.json` gateway port for the brand
+4. Strips cron runtime state to avoid overwriting live scheduling
+5. Packages `config/` as a tarball (excluding `workspace/memory/` to preserve runtime agent memories)
+6. SCPs to the GCP instance and extracts to the target user's `~/.openclaw/`
+7. Substitutes `${OPENCLAW_GATEWAY_TOKEN}` and `${HOME}` from the instance `.env`
+8. Restarts the appropriate service (`systemctl` for brands, `openclaw gateway restart` for default)
 
-### Manual Deploy
+### Adding a New Brand
 
-```bash
-# Package and upload
-tar czf /tmp/openclaw-deploy.tar.gz -C config .
-gcloud compute scp /tmp/openclaw-deploy.tar.gz \
-  blossomclaw-staging:/tmp/openclaw-deploy.tar.gz \
-  --zone=australia-southeast1-b
-
-# Extract and restart on instance
-gcloud compute ssh blossomclaw-staging \
-  --zone=australia-southeast1-b \
-  --command="tar xzf /tmp/openclaw-deploy.tar.gz -C ~/.openclaw/ && rm /tmp/openclaw-deploy.tar.gz"
-```
+1. Create `brands/<brand_id>/` with `brand.json`, `.env.example`, and `workspace/` overlay files
+2. Add the branch name to `.github/workflows/deploy.yml` triggers and the `case` block
+3. Create VM setup files in `infra/vm/` (systemd service, sudoers rules)
+4. Run `infra/vm/setup-<brand>.sh` on the target VM
+5. Fill in `/home/<brand_user>/.openclaw/.env` with secrets
+6. Push to the brand branch to trigger the first deploy
 
 ## Secret Management
 

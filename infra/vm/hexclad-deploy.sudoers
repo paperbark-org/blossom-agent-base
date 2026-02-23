@@ -1,0 +1,19 @@
+# Sudoers rules for HexClad AU deploy
+# Install: sudo cp hexclad-deploy.sudoers /etc/sudoers.d/hexclad-deploy
+#          sudo chmod 440 /etc/sudoers.d/hexclad-deploy
+#          sudo visudo -cf /etc/sudoers.d/hexclad-deploy
+#
+# Replace DEPLOY_USER with the GCP SSH user (check with: whoami over gcloud ssh)
+
+# Allow deploy user to run specific commands as hexclad_au
+DEPLOY_USER ALL=(hexclad_au) NOPASSWD: /usr/bin/tar xzf /tmp/openclaw-deploy.tar.gz -C /home/hexclad_au/.openclaw
+DEPLOY_USER ALL=(hexclad_au) NOPASSWD: /usr/bin/cp /home/hexclad_au/.openclaw/openclaw.json /home/hexclad_au/.openclaw/openclaw.json.bak.*
+DEPLOY_USER ALL=(hexclad_au) NOPASSWD: /usr/bin/test -f /home/hexclad_au/.openclaw/.env
+DEPLOY_USER ALL=(hexclad_au) NOPASSWD: /usr/bin/cat /home/hexclad_au/.openclaw/.env
+DEPLOY_USER ALL=(hexclad_au) NOPASSWD: /usr/bin/python3 -c *
+
+# Allow deploy user to manage the hexclad systemd service
+DEPLOY_USER ALL=(root) NOPASSWD: /usr/bin/systemctl restart openclaw-hexclad-au
+DEPLOY_USER ALL=(root) NOPASSWD: /usr/bin/systemctl stop openclaw-hexclad-au
+DEPLOY_USER ALL=(root) NOPASSWD: /usr/bin/systemctl start openclaw-hexclad-au
+DEPLOY_USER ALL=(root) NOPASSWD: /usr/bin/systemctl status openclaw-hexclad-au
