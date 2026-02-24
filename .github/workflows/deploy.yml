@@ -110,6 +110,7 @@ jobs:
           # Create tarball, excluding runtime state directories
           tar czf /tmp/openclaw-deploy.tar.gz \
             --exclude='./workspace/memory' \
+            --exclude='./workspace/MEMORY.md' \
             -C config .
 
           # Generate deploy script (avoids shell escaping issues in gcloud ssh)
