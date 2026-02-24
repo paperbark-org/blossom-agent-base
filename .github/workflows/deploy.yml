@@ -54,7 +54,7 @@ jobs:
               ;;
             *)
               echo "INSTANCE=blossomclaw-staging" >> $GITHUB_ENV
-              echo "DEPLOY_USER=" >> $GITHUB_ENV
+              echo "DEPLOY_USER=eli_paperbark_ai" >> $GITHUB_ENV
               echo "DEPLOY_PORT=18789" >> $GITHUB_ENV
               echo "BRAND=" >> $GITHUB_ENV
               ;;
