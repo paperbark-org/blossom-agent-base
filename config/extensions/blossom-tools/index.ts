@@ -13,7 +13,7 @@
  *   HIKER_API_KEY          – HikerAPI access key for Instagram data
  */
 
-const API_TIMEOUT_MS = 10_000;
+const API_TIMEOUT_MS = 30_000;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -34,6 +34,7 @@ interface CreatorCard {
   handle?: string;
   instagramUserId?: string;
   followers?: number;
+  engagementRate?: string;
   niche?: string;
   country?: string;
 }
@@ -196,6 +197,10 @@ const formatCreatorCard = (c: CreatorCard): string => {
     lines.push(`Followers: ${formatted}`);
   }
 
+  if (c.engagementRate) {
+    lines.push(`Engagement: ${c.engagementRate}`);
+  }
+
   if (c.niche) {
     lines.push(`Niche: ${c.niche}`);
   }
@@ -310,11 +315,10 @@ export default {
         );
 
         const profile = data.creator;
-        const shortlisted = data.is_shortlisted ? " (shortlisted)" : "";
 
         const lines: string[] = [];
         lines.push(
-          `# ${profile.full_name || profile.username || influencer_user_id}${shortlisted}`,
+          `# ${profile.full_name || profile.username || influencer_user_id}`,
         );
 
         if (profile.username) lines.push(`Handle: @${profile.username}`);
@@ -326,131 +330,6 @@ export default {
         if (profile.occupation) lines.push(`Occupation: ${profile.occupation}`);
 
         return textResult(lines.join("\n"));
-      },
-    });
-
-    // -----------------------------------------------------------------------
-    // shortlist_list
-    // -----------------------------------------------------------------------
-    api.registerTool({
-      name: "shortlist_list",
-      description:
-        "Get the current user's shortlisted creators. " +
-        "Returns all creators the user has saved to their shortlist with profile details.",
-      parameters: {
-        type: "object",
-        properties: {},
-      },
-
-      async execute(_id: string, _params: any): Promise<ToolResult> {
-        const data: any = await apiCall("GET", "/shortlist");
-        const entries: any[] = data.entries ?? [];
-
-        if (entries.length === 0) {
-          return textResult(
-            "Your shortlist is empty. Use creator_search to find creators and shortlist_add to save them.",
-          );
-        }
-
-        const lines: string[] = [
-          `You have ${entries.length} creator(s) shortlisted:\n`,
-        ];
-
-        for (const entry of entries) {
-          const inf = entry.influencer;
-          if (inf) {
-            const name =
-              inf.full_name || inf.username || entry.influencer_user_id;
-            const handle = inf.username ? ` (@${inf.username})` : "";
-            const followers = inf.follower_count
-              ? ` – ${inf.follower_count.toLocaleString()} followers`
-              : "";
-            lines.push(`- **${name}**${handle}${followers}`);
-          } else {
-            lines.push(`- ${entry.influencer_user_id}`);
-          }
-
-          if (entry.notes) {
-            lines.push(`  Notes: ${entry.notes}`);
-          }
-        }
-
-        return textResult(lines.join("\n"));
-      },
-    });
-
-    // -----------------------------------------------------------------------
-    // shortlist_add
-    // -----------------------------------------------------------------------
-    api.registerTool({
-      name: "shortlist_add",
-      description:
-        "Add a creator to the current user's shortlist. " +
-        "Use the ID field from creator_search results as the influencer_user_id. " +
-        "Optionally include notes about why they were shortlisted.",
-      parameters: {
-        type: "object",
-        properties: {
-          influencer_user_id: {
-            type: "string",
-            description:
-              "The creator's ID (from the 'ID:' field in creator_search results)",
-          },
-          notes: {
-            type: "string",
-            description:
-              "Optional notes about why this creator was shortlisted",
-          },
-        },
-        required: ["influencer_user_id"],
-      },
-
-      async execute(_id: string, params: any): Promise<ToolResult> {
-        const { influencer_user_id, notes } = params;
-
-        const body: Record<string, unknown> = { influencer_user_id };
-        if (notes) body.notes = notes;
-
-        const data: any = await apiCall("POST", "/shortlist", body);
-
-        const name =
-          data.influencer?.full_name ||
-          data.influencer?.username ||
-          influencer_user_id;
-
-        return textResult(`Added **${name}** to your shortlist.`);
-      },
-    });
-
-    // -----------------------------------------------------------------------
-    // shortlist_remove
-    // -----------------------------------------------------------------------
-    api.registerTool({
-      name: "shortlist_remove",
-      description:
-        "Remove a creator from the current user's shortlist. " +
-        "Use the ID field from creator_search or shortlist_list results.",
-      parameters: {
-        type: "object",
-        properties: {
-          influencer_user_id: {
-            type: "string",
-            description:
-              "The creator's ID (from the 'ID:' field in search or shortlist results)",
-          },
-        },
-        required: ["influencer_user_id"],
-      },
-
-      async execute(_id: string, params: any): Promise<ToolResult> {
-        const { influencer_user_id } = params;
-
-        await apiCall(
-          "DELETE",
-          `/shortlist/${encodeURIComponent(influencer_user_id)}`,
-        );
-
-        return textResult(`Removed from your shortlist.`);
       },
     });
 
@@ -536,6 +415,133 @@ export default {
       },
     });
 
-    api.logger.info("Blossom Tools plugin registered (6 tools)");
+    // -----------------------------------------------------------------------
+    // creator_media (HikerAPI – recent posts for an Instagram user)
+    // -----------------------------------------------------------------------
+    api.registerTool({
+      name: "creator_media",
+      description:
+        "Fetch recent Instagram posts/media for a creator. " +
+        "Accepts EITHER a username OR an Instagram user ID (numeric pk). " +
+        "Returns up to 12 recent posts with captions, likes, comments, media type, and timestamps. " +
+        "Use this to analyse a creator's content style, posting frequency, engagement, and sponsorship activity. " +
+        "If you only have a username, this tool will resolve the user ID automatically. " +
+        "Do NOT scrape Instagram via web_fetch — always use this tool instead.",
+      parameters: {
+        type: "object",
+        properties: {
+          username: {
+            type: "string",
+            description:
+              "Instagram username without @ (e.g., 'therock'). Provide this OR user_id.",
+          },
+          user_id: {
+            type: "string",
+            description:
+              "Instagram numeric user ID (pk). Provide this OR username.",
+          },
+        },
+      },
+
+      async execute(_id: string, params: any): Promise<ToolResult> {
+        let userId: string = params.user_id;
+
+        // Resolve username → user_id if needed
+        if (!userId && params.username) {
+          const username = (params.username as string).replace(/^@/, "");
+          const profile: any = await hikerCall("/v2/user/by/username", {
+            username,
+          });
+          const user = profile?.user ?? profile;
+          if (!user?.pk) {
+            return textResult(
+              `Could not find Instagram user "${username}". Check the spelling.`,
+            );
+          }
+          userId = String(user.pk);
+        }
+
+        if (!userId) {
+          return textResult(
+            "Please provide either a username or user_id parameter.",
+          );
+        }
+
+        const data: any = await hikerCall("/gql/user/medias", {
+          user_id: userId,
+        });
+
+        const items: any[] = data?.response?.items ?? data?.items ?? [];
+
+        if (items.length === 0) {
+          return textResult("No recent posts found for this user.");
+        }
+
+        const posts = items.slice(0, 12).map((item: any, i: number) => {
+          const lines: string[] = [];
+          const num = i + 1;
+          const date = item.taken_at
+            ? new Date(item.taken_at * 1000).toISOString().split("T")[0]
+            : "unknown date";
+
+          const mediaType =
+            item.product_type === "clips"
+              ? "Reel"
+              : item.media_type === 8
+                ? "Carousel"
+                : item.media_type === 2
+                  ? "Video"
+                  : "Photo";
+
+          const sponsored = item.is_paid_partnership ? " [SPONSORED]" : "";
+
+          lines.push(`### ${num}. ${mediaType}${sponsored} — ${date}`);
+
+          const caption = item.caption?.text;
+          if (caption) {
+            const truncated =
+              caption.length > 200 ? caption.slice(0, 200) + "…" : caption;
+            lines.push(truncated);
+          }
+
+          const metrics: string[] = [];
+          if (item.like_count != null)
+            metrics.push(`Likes: ${item.like_count.toLocaleString()}`);
+          if (item.comment_count != null)
+            metrics.push(`Comments: ${item.comment_count.toLocaleString()}`);
+          if (item.play_count != null)
+            metrics.push(`Views: ${item.play_count.toLocaleString()}`);
+          if (item.reshare_count != null)
+            metrics.push(`Shares: ${item.reshare_count.toLocaleString()}`);
+
+          if (metrics.length > 0) lines.push(metrics.join(" | "));
+
+          if (item.coauthor_producers?.length > 0) {
+            const collabs = item.coauthor_producers
+              .map((c: any) => `@${c.username}`)
+              .join(", ");
+            lines.push(`Collab: ${collabs}`);
+          }
+
+          if (item.usertags?.in?.length > 0) {
+            const tags = item.usertags.in
+              .slice(0, 5)
+              .map((t: any) => `@${t.user?.username}`)
+              .filter(Boolean)
+              .join(", ");
+            if (tags) lines.push(`Tagged: ${tags}`);
+          }
+
+          return lines.join("\n");
+        });
+
+        return textResult(
+          `Recent posts (${items.length} returned):\n\n` +
+            posts.join("\n---\n"),
+        );
+      },
+    });
+
+    api.logger.info("Blossom Tools plugin registered (4 tools)");
   },
 };
