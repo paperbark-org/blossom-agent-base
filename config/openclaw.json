@@ -48,6 +48,9 @@
       "security": "full",
       "ask": "off"
     },
+    "sessions": {
+      "visibility": "all"
+    },
     "web": {
       "search": {
         "enabled": true,
