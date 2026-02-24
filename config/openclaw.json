@@ -48,9 +48,9 @@
   "agents": {
     "defaults": {
       "model": {
-        "primary": "minimax/MiniMax-M2.1",
+        "primary": "google/gemini-2.5-flash",
         "fallbacks": [
-          "google/gemini-2.0-flash"
+          "minimax/MiniMax-M2.1"
         ]
       },
       "workspace": "${HOME}/.openclaw/workspace"
