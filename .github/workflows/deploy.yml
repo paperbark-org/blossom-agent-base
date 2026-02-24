@@ -54,7 +54,10 @@ jobs:
 
       - name: Package and deploy
         run: |
-          tar czf /tmp/openclaw-deploy.tar.gz -C config .
+          tar czf /tmp/openclaw-deploy.tar.gz \
+            --exclude='./workspace/memory' \
+            --exclude='./workspace/MEMORY.md' \
+            -C config .
 
           gcloud compute scp /tmp/openclaw-deploy.tar.gz \
             ${{ env.INSTANCE }}:/tmp/openclaw-deploy.tar.gz \
