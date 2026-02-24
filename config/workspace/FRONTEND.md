@@ -59,14 +59,23 @@ Use when the user asks about their shortlist. Read `shortlist.csv` first, then r
 :::
 ```
 
+### CRITICAL Rules — Read Before Responding
+
+**You MUST use `:::creator-table` blocks for ANY list of creators, no exceptions.**
+
+❌ NEVER use markdown tables (`| handle | followers |...`) for creator results
+❌ NEVER use bullet lists of creators (`- @handle: 45K followers`)
+✅ ALWAYS use `:::creator-table` — even for 1 creator, even for partial results
+
+**Why this matters:** The frontend can't extract creators from markdown. Blocks are the ONLY way assets get saved to the user's folder. Without blocks, the user can't export to CSV or save their shortlist.
+
 ### Best Practices
 
 1. **Always include prose** around blocks — explain what you found, why these creators match, what to do next
-2. **Use `instagramUserId`** (the `user_id` field from Qdrant) — include it when available for frontend display
+2. **Use `instagramUserId`** (the `user_id` field from Qdrant/HikerAPI) — include it when available for frontend display
 3. **blossomScore** should be 1-100, where 100 = perfect match for the brief
 4. **Followers** in blocks should be raw numbers (45200) not formatted strings — frontend handles formatting
-5. **Don't use markdown tables** for creator results — always use `:::creator-table` blocks instead
-6. **Keep reasoning concise** — 1-2 sentences explaining why this creator matches the brief
+5. **Keep reasoning concise** — 1-2 sentences explaining why this creator matches the brief
 
 ### Shortlist
 
