@@ -167,13 +167,13 @@ jobs:
           " "${TARGET_HOME}" "${OPENCLAW_GATEWAY_TOKEN}"
 
           # Restart the appropriate service
-          if [ -n "${DEPLOY_USER}" ]; then
+          if [ -n "${BRAND}" ]; then
             BRAND_SLUG="${BRAND//_/-}"
             sudo systemctl restart "openclaw-${BRAND_SLUG}"
           else
-            if command -v openclaw &>/dev/null; then
-              openclaw gateway restart 2>/dev/null || echo 'Restart signal sent'
-            fi
+            sudo systemctl restart openclaw-gateway 2>/dev/null \
+              || (command -v openclaw &>/dev/null && openclaw gateway restart 2>/dev/null) \
+              || echo 'Restart signal sent (no service found)'
           fi
 
           rm -f /tmp/openclaw-deploy.tar.gz /tmp/deploy.sh
