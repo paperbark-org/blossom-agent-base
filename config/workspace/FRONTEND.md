@@ -29,7 +29,7 @@ Use after searching for creators. The frontend renders an interactive table with
 ```
 
 **Required fields:** `handle`, `name`, `followers`
-**Recommended fields:** `instagramUserId` (needed for shortlisting), `engagement`, `niche`, `blossomScore` (1-100), `reasoning`
+**Recommended fields:** `instagramUserId`, `engagement`, `niche`, `blossomScore` (1-100), `reasoning`
 **Optional fields:** `platform`, `profileUrl`, `visualAesthetic`, `customerStory`, `ageGroup`, `gender`, `occupation`, `inferredValueSystem` (string[])
 
 #### `creator-card` — Single creator highlight
@@ -51,7 +51,7 @@ Use when showing engagement quality or audience analysis.
 ```
 
 #### `shortlist-summary` — Current shortlist overview
-Use when the user asks about their shortlist.
+Use when the user asks about their shortlist. Read `shortlist.csv` first, then render this block.
 
 ```
 :::shortlist-summary
@@ -62,20 +62,15 @@ Use when the user asks about their shortlist.
 ### Best Practices
 
 1. **Always include prose** around blocks — explain what you found, why these creators match, what to do next
-2. **Use `instagramUserId`** (the `user_id` field from Qdrant) — the frontend needs this to shortlist via the backend API
+2. **Use `instagramUserId`** (the `user_id` field from Qdrant) — include it when available for frontend display
 3. **blossomScore** should be 1-100, where 100 = perfect match for the brief
 4. **Followers** in blocks should be raw numbers (45200) not formatted strings — frontend handles formatting
 5. **Don't use markdown tables** for creator results — always use `:::creator-table` blocks instead
 6. **Keep reasoning concise** — 1-2 sentences explaining why this creator matches the brief
 
-### Backend API (for shortlisting/export)
+### Shortlist
 
-The frontend handles shortlisting directly via the blossom-backend API:
-- `POST /threads/{id}/shortlist` — add to shortlist
-- `DELETE /threads/{id}/shortlist/{userId}` — remove from shortlist
-- CSV export happens client-side (no backend endpoint needed)
-
-You do NOT need to call shortlist endpoints — the frontend handles this when users click the shortlist button on creator cards.
+Shortlisting is managed entirely by you via `shortlist.csv` in your workspace (see SOUL.md for instructions). There is no backend API for shortlisting. When users ask to add, remove, or view their shortlist, handle it yourself — do not wait for the frontend to do it.
 
 ### Scoring Creators
 
