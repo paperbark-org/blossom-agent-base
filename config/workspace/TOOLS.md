@@ -41,7 +41,7 @@ Skills are shared. Your setup is yours. Keeping them apart means you can update 
 
 > ⚠️ **CRITICAL: This database contains ONLY Australian creators.**
 > If a user asks about creators in the US, UK, Europe, Asia, or any non-Australian market — Qdrant has nothing for them. Use HikerAPI instead.
-> For Australian searches, ALWAYS use Qdrant / Blossom Backend API first — they are fast (< 2s) and have 56K AU creators.
+> For Australian searches, ALWAYS use the `creator_search` tool first — it queries Qdrant directly and is fast (< 5s) with 56K AU creators.
 
 **Connection**
 - URL: `$QDRANT_URL`
