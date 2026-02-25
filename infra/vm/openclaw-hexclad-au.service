@@ -13,10 +13,13 @@ Type=simple
 User=hexclad_au
 Group=hexclad_au
 WorkingDirectory=/home/hexclad_au
-ExecStart=/usr/local/bin/openclaw gateway start
+EnvironmentFile=/home/hexclad_au/.openclaw/.env
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=HOME=/home/hexclad_au
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/openclaw gateway --bind loopback --port 18790
 Restart=on-failure
 RestartSec=5
-Environment=HOME=/home/hexclad_au
 
 [Install]
 WantedBy=multi-user.target
