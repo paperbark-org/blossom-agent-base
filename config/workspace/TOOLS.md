@@ -192,16 +192,16 @@ curl -s -X POST "http://localhost:8123/api/v1/internal/search" \
 - **Use for:** When you need custom filters, scroll queries, or payload inspection
 - **Strength:** Deep AI-enriched profiles, semantic vector search, fast filtered queries, 56K AU creators
 
-### Source 3: Hiker API — Enrichment + Non-AU Discovery (SLOW)
+### Source 3: Hiker API — AU Enrichment / Non-AU Discovery + Enrichment (SLOW)
 - `creator_search` → keyword/niche discovery
 - `creator_get` → full profile by internal Hiker ID (includes recent posts, CDN thumbnails, live stats)
 - `creator_posts` → recent post grid with engagement data
 - **Strength:** Live data — recent posts, CDN image links, current engagement rates, story views. Data Qdrant doesn't have.
 - ⚠️ **WARNING: HikerAPI is slow (~5–15s per call, 45s+ for multi-step flows).** Always warn the user before making multiple calls.
-- **Primary use — enrichment:** After finding candidates via Blossom Backend, call `creator_get` on shortlisted creators to fetch post thumbnails and live engagement stats.
-- **Secondary use — non-AU discovery:** When the user asks about creators outside Australia, use `creator_search` as your discovery tool.
-- **DO NOT** use `creator_search` as your primary discovery tool for Australian creators — Blossom Backend API is 10x faster for AU.
-- **DO** tell the user when you're pulling live data: "Fetching live post data — this'll take a moment."
+- **For AU creators — enrichment only:** Discovery comes from Blossom Backend. Use HikerAPI (`creator_get`) AFTER to fetch post thumbnails and live engagement stats for top candidates.
+- **For non-AU creators — discovery + enrichment:** Use `creator_search` to find creators, then `creator_get` to enrich each with full profile data.
+- **DO NOT** use `creator_search` for Australian creator discovery — Blossom Backend API is 10x faster and semantically richer.
+- **DO** tell the user when pulling live data: "Fetching live post data — this'll take a moment."
 
 ### Source 3: creator_profile (Instagram Live) — Verification
 - `creator_profile(username)` → real-time Instagram lookup
@@ -218,7 +218,7 @@ curl -s -X POST "http://localhost:8123/api/v1/internal/search" \
 3. **Render `:::table` block** → show results immediately
 4. **(Optional enrichment)** Call `creator_get` on top candidates to fetch live post thumbnails and engagement — tell the user you're doing this
 
-**For non-Australian creators (HikerAPI path — warn about latency):**
+**For non-Australian creators (HikerAPI for discovery + enrichment — warn about latency):**
 1. Tell the user: "Searching live Instagram data — this takes a moment..."
 2. **HikerAPI `creator_search`** → discovery by keyword/niche
 3. **HikerAPI `creator_get`** → enrich each result with full profile, posts, CDN images
