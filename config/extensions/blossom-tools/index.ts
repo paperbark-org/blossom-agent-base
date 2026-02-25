@@ -1,15 +1,14 @@
 /**
  * Blossom Tools – OpenClaw plugin
  *
- * Registers agent tools that proxy requests to the Blossom FastAPI
- * /internal/* endpoints. Each OpenClaw instance is provisioned per-user,
- * so the user identity is fixed via BLOSSOM_USER_ID env var — the LLM
- * never controls identity.
+ * AU creator discovery via Qdrant (semantic vector search) + OpenAI embeddings.
+ * HikerAPI for live profile lookups and post media (global Instagram data).
  *
  * Required env vars (set in ~/.openclaw/.env):
- *   BLOSSOM_API_URL        – FastAPI base URL (no trailing slash)
- *   BLOSSOM_INTERNAL_KEY   – shared secret for x-internal-key header
- *   BLOSSOM_USER_ID        – Clerk user ID for this instance's owner
+ *   QDRANT_URL             – Qdrant cluster URL
+ *   QDRANT_API_KEY         – Qdrant API key
+ *   QDRANT_COLLECTION_NAME – collection name (default: instagram_influencers)
+ *   OPENAI_API_KEY         – for text-embedding-3-small embeddings
  *   HIKER_API_KEY          – HikerAPI access key for Instagram data
  */
 
@@ -28,25 +27,15 @@ interface ToolResult {
   content: ToolContent[];
 }
 
-/** Shape returned by POST /search (UnapprovedCandidate). */
-interface CreatorCard {
-  name?: string;
-  handle?: string;
-  instagramUserId?: string;
-  followers?: number;
-  engagementRate?: string;
-  niche?: string;
-  country?: string;
-}
-
 // ---------------------------------------------------------------------------
-// Config (resolved once at load time)
+// Config
 // ---------------------------------------------------------------------------
 
 interface PluginConfig {
-  apiUrl: string;
-  internalKey: string;
-  userId: string;
+  qdrantUrl: string;
+  qdrantApiKey: string;
+  qdrantCollection: string;
+  openaiApiKey: string;
   hikerApiKey: string;
 }
 
@@ -55,73 +44,185 @@ let _config: PluginConfig | null = null;
 const resolveConfig = (): PluginConfig => {
   if (_config) return _config;
 
-  const apiUrl = process.env.BLOSSOM_API_URL;
-  const internalKey = process.env.BLOSSOM_INTERNAL_KEY;
-  const userId = process.env.BLOSSOM_USER_ID;
+  const qdrantUrl = process.env.QDRANT_URL;
+  const qdrantApiKey = process.env.QDRANT_API_KEY;
+  const qdrantCollection =
+    process.env.QDRANT_COLLECTION_NAME ?? "instagram_influencers";
+  const openaiApiKey = process.env.OPENAI_API_KEY;
   const hikerApiKey = process.env.HIKER_API_KEY;
 
-  if (!apiUrl || !internalKey || !userId) {
-    throw new Error(
-      "Missing required env vars: BLOSSOM_API_URL, BLOSSOM_INTERNAL_KEY, BLOSSOM_USER_ID",
-    );
+  if (!qdrantUrl || !qdrantApiKey) {
+    throw new Error("Missing required env vars: QDRANT_URL, QDRANT_API_KEY");
   }
-
+  if (!openaiApiKey) {
+    throw new Error("Missing required env var: OPENAI_API_KEY");
+  }
   if (!hikerApiKey) {
     throw new Error("Missing required env var: HIKER_API_KEY");
   }
 
-  _config = { apiUrl, internalKey, userId, hikerApiKey };
+  _config = { qdrantUrl, qdrantApiKey, qdrantCollection, openaiApiKey, hikerApiKey };
   return _config;
 };
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Qdrant helpers
 // ---------------------------------------------------------------------------
 
-const apiCall = async (
-  method: string,
-  path: string,
-  body?: Record<string, unknown>,
-): Promise<unknown> => {
-  const { apiUrl, internalKey, userId } = resolveConfig();
-
-  const url = `${apiUrl}/api/v1/internal${path}`;
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    "x-internal-key": internalKey,
-    "x-user-id": userId,
-  };
+const embedQuery = async (text: string): Promise<number[]> => {
+  const { openaiApiKey } = resolveConfig();
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
 
   try {
-    const res = await fetch(url, {
-      method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
+    const res = await fetch("https://api.openai.com/v1/embeddings", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${openaiApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ model: "text-embedding-3-small", input: text }),
       signal: controller.signal,
     });
 
-    if (!res.ok) {
-      const status = res.status;
-      const errBody = await res.text();
-      console.error(
-        `[blossom-tools] ${method} ${path} → ${status}: ${errBody}`,
-      );
-      throw new Error(`Request failed (status ${status}). Please try again.`);
-    }
-
-    return res.json();
+    if (!res.ok) throw new Error(`OpenAI embeddings failed: ${res.status}`);
+    const data: any = await res.json();
+    return data.data[0].embedding;
   } catch (err: unknown) {
     if (err instanceof Error && err.name === "AbortError") {
-      throw new Error("Request timed out. Please try again.");
+      throw new Error("Embedding request timed out.");
     }
     throw err;
   } finally {
     clearTimeout(timeout);
   }
 };
+
+const qdrantSearch = async (
+  vector: number[],
+  limit: number,
+  filter?: Record<string, unknown>,
+): Promise<any[]> => {
+  const { qdrantUrl, qdrantApiKey, qdrantCollection } = resolveConfig();
+
+  const body: Record<string, unknown> = {
+    vector,
+    limit,
+    with_payload: true,
+    with_vector: false,
+  };
+  if (filter) body.filter = filter;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(
+      `${qdrantUrl}/collections/${qdrantCollection}/points/search`,
+      {
+        method: "POST",
+        headers: {
+          "api-key": qdrantApiKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      },
+    );
+
+    if (!res.ok) throw new Error(`Qdrant search failed: ${res.status}`);
+    const data: any = await res.json();
+    return data.result ?? [];
+  } catch (err: unknown) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error("Qdrant search timed out.");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
+const qdrantScrollByUserId = async (userId: string): Promise<any | null> => {
+  const { qdrantUrl, qdrantApiKey, qdrantCollection } = resolveConfig();
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(
+      `${qdrantUrl}/collections/${qdrantCollection}/points/scroll`,
+      {
+        method: "POST",
+        headers: {
+          "api-key": qdrantApiKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          filter: {
+            must: [{ key: "user_id", match: { value: userId } }],
+          },
+          limit: 1,
+          with_payload: true,
+          with_vector: false,
+        }),
+        signal: controller.signal,
+      },
+    );
+
+    if (!res.ok) throw new Error(`Qdrant scroll failed: ${res.status}`);
+    const data: any = await res.json();
+    const points = data.result?.points ?? [];
+    return points[0]?.payload ?? null;
+  } catch (err: unknown) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error("Qdrant lookup timed out.");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Formatting helpers
+// ---------------------------------------------------------------------------
+
+const formatFollowers = (n: number): string => {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return `${n}`;
+};
+
+const formatQdrantCreator = (result: any): string => {
+  const p = result.payload ?? result;
+  const lines: string[] = [];
+
+  const name = p.full_name || p.username || "Unknown";
+  const handle = p.username ? `@${p.username}` : "";
+  lines.push(`**${name}** ${handle}`.trim());
+
+  if (p.user_id) lines.push(`ID: ${p.user_id}`);
+  if (p.follower_count != null) lines.push(`Followers: ${formatFollowers(p.follower_count)}`);
+  if (p.engagement_rate) lines.push(`Engagement: ${p.engagement_rate}`);
+  if (p.niche) lines.push(`Niche: ${p.niche}`);
+  if (p.age_group) lines.push(`Age Group: ${p.age_group}`);
+  if (p.gender) lines.push(`Gender: ${p.gender}`);
+  if (p.occupation) lines.push(`Occupation: ${p.occupation}`);
+  if (p.city_name && p.city_name !== "Unknown") lines.push(`City: ${p.city_name}`);
+  if (p.visual_aesthetic) lines.push(`Visual Style: ${p.visual_aesthetic}`);
+  if (p.customer_story) lines.push(`Audience: ${p.customer_story}`);
+  if (p.inferred_value_system?.length) {
+    lines.push(`Values: ${(p.inferred_value_system as string[]).join(", ")}`);
+  }
+
+  return lines.join("\n");
+};
+
+// ---------------------------------------------------------------------------
+// HikerAPI helper
+// ---------------------------------------------------------------------------
 
 const HIKER_API_BASE = "https://api.hikerapi.com";
 
@@ -151,18 +252,12 @@ const hikerCall = async (
     if (!res.ok) {
       const status = res.status;
       const errBody = await res.text();
-      console.error(
-        `[blossom-tools] HIKER GET ${path} → ${status}: ${errBody}`,
-      );
+      console.error(`[blossom-tools] HIKER GET ${path} → ${status}: ${errBody}`);
 
       if (status === 404) {
-        throw new Error(
-          "Instagram user not found. Check the username and try again.",
-        );
+        throw new Error("Instagram user not found. Check the username and try again.");
       }
-      throw new Error(
-        `HikerAPI request failed (status ${status}). Please try again.`,
-      );
+      throw new Error(`HikerAPI request failed (status ${status}). Please try again.`);
     }
 
     return res.json();
@@ -176,41 +271,9 @@ const hikerCall = async (
   }
 };
 
-const formatCreatorCard = (c: CreatorCard): string => {
-  const lines: string[] = [];
-  const name = c.name || c.handle || "Unknown";
-  const handle = c.handle ? `@${c.handle}` : "";
-
-  lines.push(`**${name}** ${handle}`);
-
-  if (c.instagramUserId) {
-    lines.push(`ID: ${c.instagramUserId}`);
-  }
-
-  if (c.followers != null) {
-    const formatted =
-      c.followers >= 1_000_000
-        ? `${(c.followers / 1_000_000).toFixed(1)}M`
-        : c.followers >= 1_000
-          ? `${(c.followers / 1_000).toFixed(1)}K`
-          : `${c.followers}`;
-    lines.push(`Followers: ${formatted}`);
-  }
-
-  if (c.engagementRate) {
-    lines.push(`Engagement: ${c.engagementRate}`);
-  }
-
-  if (c.niche) {
-    lines.push(`Niche: ${c.niche}`);
-  }
-
-  if (c.country) {
-    lines.push(`Location: ${c.country}`);
-  }
-
-  return lines.join("\n");
-};
+// ---------------------------------------------------------------------------
+// Shared
+// ---------------------------------------------------------------------------
 
 const textResult = (text: string): ToolResult => ({
   content: [{ type: "text", text }],
@@ -226,17 +289,16 @@ export default {
 
   register(api: any) {
     // -----------------------------------------------------------------------
-    // creator_search
+    // creator_search — AU creator discovery via Qdrant
     // -----------------------------------------------------------------------
     api.registerTool({
       name: "creator_search",
       description:
-        "Search for Australian creators/influencers matching a natural language query. " +
-        "Returns a list of matching creator profiles with handles, follower counts, and niches. " +
-        "Use this for discovery queries like 'fitness influencers in Sydney'. " +
-        "This tool ONLY searches the Australian creator database. " +
-        "For international/non-AU creators, use web_search instead. " +
-        "For looking up a specific Instagram handle, use creator_profile instead.",
+        "Search the Australian Instagram creator database (56,000+ creators) using semantic search. " +
+        "Returns rich profiles including engagement_rate, niche, visual_aesthetic, customer_story, age_group, gender, and occupation. " +
+        "Use for all Australian creator discovery queries. " +
+        "This database ONLY contains Australian creators — for non-AU searches use web_search. " +
+        "For a specific Instagram handle lookup, use creator_profile instead.",
       parameters: {
         type: "object",
         properties: {
@@ -247,8 +309,7 @@ export default {
           },
           limit: {
             type: "number",
-            description:
-              "Maximum number of results to return (default 10, max 50)",
+            description: "Maximum number of results to return (default 10, max 50)",
           },
           min_followers: {
             type: "number",
@@ -263,44 +324,53 @@ export default {
       },
 
       async execute(_id: string, params: any): Promise<ToolResult> {
-        const { query, limit, min_followers, max_followers } = params;
+        const { query, limit = 10, min_followers, max_followers } = params;
 
-        const body: Record<string, unknown> = { query };
-        if (limit != null) body.limit = limit;
-        if (min_followers != null) body.min_followers = min_followers;
-        if (max_followers != null) body.max_followers = max_followers;
+        const vector = await embedQuery(query);
 
-        const data: any = await apiCall("POST", "/search", body);
-        const candidates: CreatorCard[] = data.candidates ?? [];
+        const mustClauses: any[] = [
+          // Exclude creators that have been marked as no longer found
+          { key: "no_longer_found", match: { value: false } },
+        ];
 
-        if (candidates.length === 0) {
+        if (min_followers != null || max_followers != null) {
+          const range: Record<string, number> = {};
+          if (min_followers != null) range.gte = min_followers;
+          if (max_followers != null) range.lte = max_followers;
+          mustClauses.push({ key: "follower_count", range });
+        }
+
+        const filter = { must: mustClauses };
+        const results = await qdrantSearch(vector, Math.min(limit, 50), filter);
+
+        if (results.length === 0) {
           return textResult("No creators found matching your search criteria.");
         }
 
-        const cards = candidates.map(formatCreatorCard);
+        const cards = results.map(formatQdrantCreator);
         return textResult(
-          `Found ${candidates.length} creator(s):\n` + cards.join("\n---\n"),
+          `Found ${results.length} Australian creator(s):\n\n` +
+            cards.join("\n---\n"),
         );
       },
     });
 
     // -----------------------------------------------------------------------
-    // creator_get
+    // creator_get — fetch full profile from Qdrant by Instagram user ID
     // -----------------------------------------------------------------------
     api.registerTool({
       name: "creator_get",
       description:
-        "Get the full profile for an Australian creator by their internal ID. " +
+        "Get the full Qdrant profile for an Australian creator by their Instagram user ID. " +
         "Use the ID field from creator_search results. " +
-        "Returns detailed profile information including followers, niche, age group, and gender. " +
-        "Do NOT use this for Instagram usernames — use creator_profile for that.",
+        "Returns all available data: followers, engagement_rate, niche, visual_aesthetic, customer_story, demographics, values, and post_thumbnails. " +
+        "Do NOT use this for Instagram username lookups — use creator_profile for that.",
       parameters: {
         type: "object",
         properties: {
           influencer_user_id: {
             type: "string",
-            description:
-              "The creator's ID (from the 'ID:' field in creator_search results)",
+            description: "The creator's Instagram user ID (from the 'ID:' field in creator_search results)",
           },
         },
         required: ["influencer_user_id"],
@@ -309,25 +379,27 @@ export default {
       async execute(_id: string, params: any): Promise<ToolResult> {
         const { influencer_user_id } = params;
 
-        const data: any = await apiCall(
-          "GET",
-          `/creator/${encodeURIComponent(influencer_user_id)}`,
-        );
+        const payload = await qdrantScrollByUserId(influencer_user_id);
 
-        const profile = data.creator;
+        if (!payload) {
+          return textResult(
+            `Creator with ID ${influencer_user_id} not found in the Australian creator database.`,
+          );
+        }
 
-        const lines: string[] = [];
-        lines.push(
-          `# ${profile.full_name || profile.username || influencer_user_id}`,
-        );
+        const lines = [formatQdrantCreator({ payload })];
 
-        if (profile.username) lines.push(`Handle: @${profile.username}`);
-        if (profile.follower_count != null)
-          lines.push(`Followers: ${profile.follower_count.toLocaleString()}`);
-        if (profile.niche) lines.push(`Niche: ${profile.niche}`);
-        if (profile.age_group) lines.push(`Age Group: ${profile.age_group}`);
-        if (profile.gender) lines.push(`Gender: ${profile.gender}`);
-        if (profile.occupation) lines.push(`Occupation: ${profile.occupation}`);
+        if (payload.biography) {
+          lines.push(`\nBio: ${payload.biography}`);
+        }
+
+        const thumbnails: any[] = payload.post_thumbnails ?? [];
+        if (thumbnails.length > 0) {
+          lines.push(`\nPost thumbnails available: ${thumbnails.length} posts`);
+          thumbnails.slice(0, 3).forEach((t: any, i: number) => {
+            if (t.url) lines.push(`  ${i + 1}. ${t.url} (${t.like_count ?? 0} likes)`);
+          });
+        }
 
         return textResult(lines.join("\n"));
       },
@@ -362,7 +434,6 @@ export default {
         const username = rawUsername.replace(/^@/, "");
 
         const raw: any = await hikerCall("/v2/user/by/username", { username });
-        // HikerAPI wraps the profile in a "user" key
         const data: any = raw?.user ?? raw;
 
         if (!data || (!data.pk && !data.username)) {
@@ -383,10 +454,7 @@ export default {
           if (data.following_count != null) {
             lines.push(`Following: ${data.following_count.toLocaleString()}`);
           }
-          lines.push(
-            "",
-            "Their posts and detailed metrics are not publicly available.",
-          );
+          lines.push("", "Their posts and detailed metrics are not publicly available.");
           return textResult(lines.join("\n"));
         }
 
@@ -446,12 +514,9 @@ export default {
       async execute(_id: string, params: any): Promise<ToolResult> {
         let userId: string = params.user_id;
 
-        // Resolve username → user_id if needed
         if (!userId && params.username) {
           const username = (params.username as string).replace(/^@/, "");
-          const profile: any = await hikerCall("/v2/user/by/username", {
-            username,
-          });
+          const profile: any = await hikerCall("/v2/user/by/username", { username });
           const user = profile?.user ?? profile;
           if (!user?.pk) {
             return textResult(
@@ -462,14 +527,10 @@ export default {
         }
 
         if (!userId) {
-          return textResult(
-            "Please provide either a username or user_id parameter.",
-          );
+          return textResult("Please provide either a username or user_id parameter.");
         }
 
-        const data: any = await hikerCall("/gql/user/medias", {
-          user_id: userId,
-        });
+        const data: any = await hikerCall("/gql/user/medias", { user_id: userId });
 
         const items: any[] = data?.response?.items ?? data?.items ?? [];
 
@@ -494,7 +555,6 @@ export default {
                   : "Photo";
 
           const sponsored = item.is_paid_partnership ? " [SPONSORED]" : "";
-
           lines.push(`### ${num}. ${mediaType}${sponsored} — ${date}`);
 
           const caption = item.caption?.text;
@@ -536,8 +596,7 @@ export default {
         });
 
         return textResult(
-          `Recent posts (${items.length} returned):\n\n` +
-            posts.join("\n---\n"),
+          `Recent posts (${items.length} returned):\n\n` + posts.join("\n---\n"),
         );
       },
     });
