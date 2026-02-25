@@ -192,16 +192,16 @@ curl -s -X POST "http://localhost:8123/api/v1/internal/search" \
 - **Use for:** When you need custom filters, scroll queries, or payload inspection
 - **Strength:** Deep AI-enriched profiles, semantic vector search, fast filtered queries, 56K AU creators
 
-### Source 2: Hiker API — Cross-reference (SLOW — use sparingly)
-- `creator_search` → natural language discovery across Hiker's AU database
-- `creator_get` → full profile by internal ID
-- **Use for:** Finding creators not yet in Qdrant, or non-Australian creator searches
-- ⚠️ **WARNING: HikerAPI is slow (~5–15s per call, 45s+ for multi-step flows).** Only use it when:
-  1. The user explicitly asks about non-Australian creators
-  2. A specific handle is not found in Qdrant at all
-  3. You need live Instagram data for a creator not in Qdrant
-- **DO NOT** use `creator_search` as your primary discovery tool for Australian creators — Blossom Backend API is faster and returns richer data.
-- **If you must use HikerAPI**, be upfront with the user: "I'm pulling live Instagram data — this may take a moment."
+### Source 3: Hiker API — Enrichment + Non-AU Discovery (SLOW)
+- `creator_search` → keyword/niche discovery
+- `creator_get` → full profile by internal Hiker ID (includes recent posts, CDN thumbnails, live stats)
+- `creator_posts` → recent post grid with engagement data
+- **Strength:** Live data — recent posts, CDN image links, current engagement rates, story views. Data Qdrant doesn't have.
+- ⚠️ **WARNING: HikerAPI is slow (~5–15s per call, 45s+ for multi-step flows).** Always warn the user before making multiple calls.
+- **Primary use — enrichment:** After finding candidates via Blossom Backend, call `creator_get` on shortlisted creators to fetch post thumbnails and live engagement stats.
+- **Secondary use — non-AU discovery:** When the user asks about creators outside Australia, use `creator_search` as your discovery tool.
+- **DO NOT** use `creator_search` as your primary discovery tool for Australian creators — Blossom Backend API is 10x faster for AU.
+- **DO** tell the user when you're pulling live data: "Fetching live post data — this'll take a moment."
 
 ### Source 3: creator_profile (Instagram Live) — Verification
 - `creator_profile(username)` → real-time Instagram lookup
@@ -212,19 +212,20 @@ curl -s -X POST "http://localhost:8123/api/v1/internal/search" \
 
 ### Discovery Flow (recommended)
 
-**For Australian creators (the common case):**
-1. **Blossom Backend API** → single fast call, handles embedding internally, returns structured candidates
+**For Australian creators (the common case — fast path):**
+1. **Blossom Backend API** → single fast call, semantic search, returns structured candidates
 2. **Score each candidate** → assign `blossomScore` (0–100) based on brief fit, include `reasoning`
-3. **Verify live** via `creator_profile` if needed → confirm still active before pitching
-4. **Web search** → brand safety checks, recent campaigns, controversies
+3. **Render `:::table` block** → show results immediately
+4. **(Optional enrichment)** Call `creator_get` on top candidates to fetch live post thumbnails and engagement — tell the user you're doing this
 
-**For non-Australian creators (use HikerAPI — expect slowness):**
-1. **HikerAPI `creator_search`** → discovery by keyword/niche
-2. **HikerAPI `creator_get`** → enrich each result with full profile
-3. **Score candidates** → assign `blossomScore` manually
-4. Tell the user it's taking time: "Pulling live Instagram data — almost there..."
+**For non-Australian creators (HikerAPI path — warn about latency):**
+1. Tell the user: "Searching live Instagram data — this takes a moment..."
+2. **HikerAPI `creator_search`** → discovery by keyword/niche
+3. **HikerAPI `creator_get`** → enrich each result with full profile, posts, CDN images
+4. **Score candidates** → assign `blossomScore` manually
+5. **Render `:::table` block** → show results
 
-**Never** run multiple sequential HikerAPI calls without warning the user about latency.
+**Never** run multiple sequential HikerAPI calls silently — always set user expectations upfront.
 **Never** use Qdrant/Blossom Backend for non-Australian creators — they're not in the database.
 
 ---
