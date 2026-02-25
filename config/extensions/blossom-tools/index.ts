@@ -44,25 +44,40 @@ let _config: PluginConfig | null = null;
 const resolveConfig = (): PluginConfig => {
   if (_config) return _config;
 
-  const qdrantUrl = process.env.QDRANT_URL;
-  const qdrantApiKey = process.env.QDRANT_API_KEY;
-  const qdrantCollection =
-    process.env.QDRANT_COLLECTION_NAME ?? "instagram_influencers";
-  const openaiApiKey = process.env.OPENAI_API_KEY;
   const hikerApiKey = process.env.HIKER_API_KEY;
-
-  if (!qdrantUrl || !qdrantApiKey) {
-    throw new Error("Missing required env vars: QDRANT_URL, QDRANT_API_KEY");
-  }
-  if (!openaiApiKey) {
-    throw new Error("Missing required env var: OPENAI_API_KEY");
-  }
   if (!hikerApiKey) {
     throw new Error("Missing required env var: HIKER_API_KEY");
   }
 
-  _config = { qdrantUrl, qdrantApiKey, qdrantCollection, openaiApiKey, hikerApiKey };
+  _config = {
+    qdrantUrl: process.env.QDRANT_URL ?? "",
+    qdrantApiKey: process.env.QDRANT_API_KEY ?? "",
+    qdrantCollection:
+      process.env.QDRANT_COLLECTION_NAME ?? "instagram_influencers",
+    openaiApiKey: process.env.OPENAI_API_KEY ?? "",
+    hikerApiKey,
+  };
   return _config;
+};
+
+const requireQdrant = (): {
+  qdrantUrl: string;
+  qdrantApiKey: string;
+  qdrantCollection: string;
+  openaiApiKey: string;
+} => {
+  const c = resolveConfig();
+  if (!c.qdrantUrl || !c.qdrantApiKey) {
+    throw new Error(
+      "Australian creator search is unavailable — QDRANT_URL and QDRANT_API_KEY are not configured on this instance.",
+    );
+  }
+  if (!c.openaiApiKey) {
+    throw new Error(
+      "Australian creator search is unavailable — OPENAI_API_KEY is not configured on this instance.",
+    );
+  }
+  return c;
 };
 
 // ---------------------------------------------------------------------------
@@ -70,7 +85,7 @@ const resolveConfig = (): PluginConfig => {
 // ---------------------------------------------------------------------------
 
 const embedQuery = async (text: string): Promise<number[]> => {
-  const { openaiApiKey } = resolveConfig();
+  const { openaiApiKey } = requireQdrant();
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
@@ -104,7 +119,7 @@ const qdrantSearch = async (
   limit: number,
   filter?: Record<string, unknown>,
 ): Promise<any[]> => {
-  const { qdrantUrl, qdrantApiKey, qdrantCollection } = resolveConfig();
+  const { qdrantUrl, qdrantApiKey, qdrantCollection } = requireQdrant();
 
   const body: Record<string, unknown> = {
     vector,
@@ -145,7 +160,7 @@ const qdrantSearch = async (
 };
 
 const qdrantScrollByUserId = async (userId: string): Promise<any | null> => {
-  const { qdrantUrl, qdrantApiKey, qdrantCollection } = resolveConfig();
+  const { qdrantUrl, qdrantApiKey, qdrantCollection } = requireQdrant();
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
@@ -204,13 +219,15 @@ const formatQdrantCreator = (result: any): string => {
   lines.push(`**${name}** ${handle}`.trim());
 
   if (p.user_id) lines.push(`ID: ${p.user_id}`);
-  if (p.follower_count != null) lines.push(`Followers: ${formatFollowers(p.follower_count)}`);
+  if (p.follower_count != null)
+    lines.push(`Followers: ${formatFollowers(p.follower_count)}`);
   if (p.engagement_rate) lines.push(`Engagement: ${p.engagement_rate}`);
   if (p.niche) lines.push(`Niche: ${p.niche}`);
   if (p.age_group) lines.push(`Age Group: ${p.age_group}`);
   if (p.gender) lines.push(`Gender: ${p.gender}`);
   if (p.occupation) lines.push(`Occupation: ${p.occupation}`);
-  if (p.city_name && p.city_name !== "Unknown") lines.push(`City: ${p.city_name}`);
+  if (p.city_name && p.city_name !== "Unknown")
+    lines.push(`City: ${p.city_name}`);
   if (p.visual_aesthetic) lines.push(`Visual Style: ${p.visual_aesthetic}`);
   if (p.customer_story) lines.push(`Audience: ${p.customer_story}`);
   if (p.inferred_value_system?.length) {
@@ -252,12 +269,18 @@ const hikerCall = async (
     if (!res.ok) {
       const status = res.status;
       const errBody = await res.text();
-      console.error(`[blossom-tools] HIKER GET ${path} → ${status}: ${errBody}`);
+      console.error(
+        `[blossom-tools] HIKER GET ${path} → ${status}: ${errBody}`,
+      );
 
       if (status === 404) {
-        throw new Error("Instagram user not found. Check the username and try again.");
+        throw new Error(
+          "Instagram user not found. Check the username and try again.",
+        );
       }
-      throw new Error(`HikerAPI request failed (status ${status}). Please try again.`);
+      throw new Error(
+        `HikerAPI request failed (status ${status}). Please try again.`,
+      );
     }
 
     return res.json();
@@ -309,7 +332,8 @@ export default {
           },
           limit: {
             type: "number",
-            description: "Maximum number of results to return (default 10, max 50)",
+            description:
+              "Maximum number of results to return (default 10, max 50)",
           },
           min_followers: {
             type: "number",
@@ -370,7 +394,8 @@ export default {
         properties: {
           influencer_user_id: {
             type: "string",
-            description: "The creator's Instagram user ID (from the 'ID:' field in creator_search results)",
+            description:
+              "The creator's Instagram user ID (from the 'ID:' field in creator_search results)",
           },
         },
         required: ["influencer_user_id"],
@@ -397,7 +422,8 @@ export default {
         if (thumbnails.length > 0) {
           lines.push(`\nPost thumbnails available: ${thumbnails.length} posts`);
           thumbnails.slice(0, 3).forEach((t: any, i: number) => {
-            if (t.url) lines.push(`  ${i + 1}. ${t.url} (${t.like_count ?? 0} likes)`);
+            if (t.url)
+              lines.push(`  ${i + 1}. ${t.url} (${t.like_count ?? 0} likes)`);
           });
         }
 
@@ -454,7 +480,10 @@ export default {
           if (data.following_count != null) {
             lines.push(`Following: ${data.following_count.toLocaleString()}`);
           }
-          lines.push("", "Their posts and detailed metrics are not publicly available.");
+          lines.push(
+            "",
+            "Their posts and detailed metrics are not publicly available.",
+          );
           return textResult(lines.join("\n"));
         }
 
@@ -516,7 +545,9 @@ export default {
 
         if (!userId && params.username) {
           const username = (params.username as string).replace(/^@/, "");
-          const profile: any = await hikerCall("/v2/user/by/username", { username });
+          const profile: any = await hikerCall("/v2/user/by/username", {
+            username,
+          });
           const user = profile?.user ?? profile;
           if (!user?.pk) {
             return textResult(
@@ -527,10 +558,14 @@ export default {
         }
 
         if (!userId) {
-          return textResult("Please provide either a username or user_id parameter.");
+          return textResult(
+            "Please provide either a username or user_id parameter.",
+          );
         }
 
-        const data: any = await hikerCall("/gql/user/medias", { user_id: userId });
+        const data: any = await hikerCall("/gql/user/medias", {
+          user_id: userId,
+        });
 
         const items: any[] = data?.response?.items ?? data?.items ?? [];
 
@@ -596,7 +631,8 @@ export default {
         });
 
         return textResult(
-          `Recent posts (${items.length} returned):\n\n` + posts.join("\n---\n"),
+          `Recent posts (${items.length} returned):\n\n` +
+            posts.join("\n---\n"),
         );
       },
     });
