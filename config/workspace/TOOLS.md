@@ -154,58 +154,35 @@ results = qdrant_search(vector, limit=20, filters={
 
 ---
 
-## 🚀 FAST PATH: Blossom Backend API (preferred for chat responses)
+## Discovery Platform Strategy
 
-**When responding to users via chat (HTTP chat completions), use the backend API instead of raw Qdrant.** It handles embedding + search in one call, is faster, and returns structured UnapprovedCandidate[] data.
+### Source 1: Qdrant — Primary for AU creators (fast, semantic)
 
-```bash
-curl -s -X POST "http://localhost:8123/api/v1/internal/search" \
-  -H "Content-Type: application/json" \
-  -H "x-internal-key: $BLOSSOM_INTERNAL_KEY" \
-  -H "x-user-id: $BLOSSOM_USER_ID" \
-  -d '{
-    "query": "beauty and skincare creators in Sydney",
-    "limit": 15,
-    "min_followers": 10000,
-    "max_followers": 50000
-  }'
-```
+**For all Australian creator searches, use Qdrant directly.** It's fast (< 2s), semantically rich, and has 56K AU profiles with AI-enriched fields including `engagement_rate`, `visual_aesthetic`, `niche`, `customer_story`, and more.
 
-**Response:** `{"candidates": [...], "count": N}` where each candidate has:
-`name`, `handle`, `instagram_user_id` (aliased as `instagramUserId`), `platform`, `profile_url`, `followers`, `country`, `visual_aesthetic`, `niche`, `customer_story`, `age_group`, `gender`, `occupation`, `inferred_value_system`
+See the **Qdrant Database** section above for the full query pattern.
 
-**NOTE:** The backend does NOT return blossomScore — you must generate that yourself by scoring each candidate against the user's brief.
+Fields returned per creator: `username`, `full_name`, `user_id`, `follower_count`, `niche`, `engagement_rate`, `visual_aesthetic`, `customer_story`, `age_group`, `gender`, `occupation`, `inferred_value_system`, `post_thumbnails` (sparse), `biography`, `city_name`
 
-**Environment variables available:** `$BLOSSOM_API_URL`, `$BLOSSOM_INTERNAL_KEY`, `$BLOSSOM_USER_ID`
-**For local dev:** Use `http://localhost:8123/api/v1` (backend runs locally)
-**For staging:** Use `$BLOSSOM_API_URL` (Cloud Run)
+**After getting Qdrant results:**
+- Assign a `blossomScore` (0–100) per creator based on fit against the user's brief
+- Include 1–2 sentence `reasoning` per row
+- Render a `:::table` block immediately
 
----
-
-## Discovery Platform Strategy — Three Sources Combined
-
-### Source 1: Blossom Backend API — Primary (fastest, single call)
-- **Use for:** Chat responses — one curl call handles embedding + search
-- **Strength:** Fast, handles embedding internally, returns structured data
-
-### Source 2: Qdrant (Our DB) — Direct access (for complex queries)
-- **Use for:** When you need custom filters, scroll queries, or payload inspection
-- **Strength:** Deep AI-enriched profiles, semantic vector search, fast filtered queries, 56K AU creators
-
-### Source 3: Hiker API — AU Enrichment / Non-AU Discovery + Enrichment (SLOW)
+### Source 2: HikerAPI — AU Enrichment / Non-AU Discovery + Enrichment (SLOW)
 - `creator_search` → keyword/niche discovery
-- `creator_get` → full profile by internal Hiker ID (includes recent posts, CDN thumbnails, live stats)
+- `creator_get` → full profile by internal Hiker ID (recent posts, CDN thumbnails, live stats)
 - `creator_posts` → recent post grid with engagement data
-- **Strength:** Live data — recent posts, CDN image links, current engagement rates, story views. Data Qdrant doesn't have.
+- **Strength:** Live data Qdrant doesn't have — recent post thumbnails, CDN image links, real-time engagement, story views
 - ⚠️ **WARNING: HikerAPI is slow (~5–15s per call, 45s+ for multi-step flows).** Always warn the user before making multiple calls.
-- **For AU creators — enrichment only:** Discovery comes from Blossom Backend. Use HikerAPI (`creator_get`) AFTER to fetch post thumbnails and live engagement stats for top candidates.
+- **For AU creators — enrichment only:** Use Qdrant for discovery. Use `creator_get` AFTER to fetch live post thumbnails and engagement for shortlisted/top candidates.
 - **For non-AU creators — discovery + enrichment:** Use `creator_search` to find creators, then `creator_get` to enrich each with full profile data.
-- **DO NOT** use `creator_search` for Australian creator discovery — Blossom Backend API is 10x faster and semantically richer.
+- **DO NOT** use `creator_search` for Australian creator discovery — Qdrant is faster and semantically richer.
 - **DO** tell the user when pulling live data: "Fetching live post data — this'll take a moment."
 
 ### Source 3: creator_profile (Instagram Live) — Verification
 - `creator_profile(username)` → real-time Instagram lookup
-- **Use for:** Live follower counts, current bio, verification status before pitching
+- **Use for:** Confirming a creator is still active, current follower count, before pitching
 
 ### Source 4: web_search — Context & Brand Safety
 - **Use for:** Recent press, brand safety checks, campaign history, trend research, competitor analysis
@@ -213,12 +190,12 @@ curl -s -X POST "http://localhost:8123/api/v1/internal/search" \
 ### Discovery Flow (recommended)
 
 **For Australian creators (the common case — fast path):**
-1. **Blossom Backend API** → single fast call, semantic search, returns structured candidates
-2. **Score each candidate** → assign `blossomScore` (0–100) based on brief fit, include `reasoning`
+1. **Qdrant semantic search** → embed query, search collection, apply follower filters
+2. **Score each result** → assign `blossomScore` (0–100) based on brief fit, include `reasoning`
 3. **Render `:::table` block** → show results immediately
-4. **(Optional enrichment)** Call `creator_get` on top candidates to fetch live post thumbnails and engagement — tell the user you're doing this
+4. **(Optional enrichment)** Call HikerAPI `creator_get` on top candidates to fetch live post thumbnails — tell the user you're doing this
 
-**For non-Australian creators (HikerAPI for discovery + enrichment — warn about latency):**
+**For non-Australian creators (HikerAPI — warn about latency):**
 1. Tell the user: "Searching live Instagram data — this takes a moment..."
 2. **HikerAPI `creator_search`** → discovery by keyword/niche
 3. **HikerAPI `creator_get`** → enrich each result with full profile, posts, CDN images
@@ -226,7 +203,7 @@ curl -s -X POST "http://localhost:8123/api/v1/internal/search" \
 5. **Render `:::table` block** → show results
 
 **Never** run multiple sequential HikerAPI calls silently — always set user expectations upfront.
-**Never** use Qdrant/Blossom Backend for non-Australian creators — they're not in the database.
+**Never** use Qdrant for non-Australian creators — they're not in the database.
 
 ---
 
