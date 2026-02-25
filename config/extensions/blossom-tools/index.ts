@@ -321,7 +321,10 @@ export default {
         "Returns rich profiles including engagement_rate, niche, visual_aesthetic, customer_story, age_group, gender, and occupation. " +
         "Use for all Australian creator discovery queries. " +
         "This database ONLY contains Australian creators — for non-AU searches use web_search. " +
-        "For a specific Instagram handle lookup, use creator_profile instead.",
+        "For a specific Instagram handle lookup, use creator_profile instead. " +
+        "IMPORTANT: After calling this tool, you MUST render results as a :::table block. " +
+        "Include handle, name, followers, engagement_rate (or 'N/A'), niche, blossomScore (0-100), and reasoning for each row. " +
+        "Never use markdown lists or plain text for creator results — always use :::table.",
       parameters: {
         type: "object",
         properties: {
