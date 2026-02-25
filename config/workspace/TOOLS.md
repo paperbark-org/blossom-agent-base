@@ -156,54 +156,51 @@ results = qdrant_search(vector, limit=20, filters={
 
 ## Discovery Platform Strategy
 
-### Source 1: Qdrant — Primary for AU creators (fast, semantic)
+### Tool: `creator_search` — AU creator discovery (Qdrant-backed, fast)
 
-**For all Australian creator searches, use Qdrant directly.** It's fast (< 2s), semantically rich, and has 56K AU profiles with AI-enriched fields including `engagement_rate`, `visual_aesthetic`, `niche`, `customer_story`, and more.
+`creator_search` searches the Qdrant database directly. It handles embedding internally — just pass a natural language query and optional follower filters. Returns rich profiles including `engagement_rate`, `niche`, `visual_aesthetic`, `customer_story`, `age_group`, `gender`, `occupation`.
 
-See the **Qdrant Database** section above for the full query pattern.
+**Always use `creator_search` for Australian creator queries.** It's the fast path.
 
-Fields returned per creator: `username`, `full_name`, `user_id`, `follower_count`, `niche`, `engagement_rate`, `visual_aesthetic`, `customer_story`, `age_group`, `gender`, `occupation`, `inferred_value_system`, `post_thumbnails` (sparse), `biography`, `city_name`
-
-**After getting Qdrant results:**
+**After getting results:**
 - Assign a `blossomScore` (0–100) per creator based on fit against the user's brief
-- Include 1–2 sentence `reasoning` per row
+- Include 1–2 sentence `reasoning` per row explaining the score
 - Render a `:::table` block immediately
 
-### Source 2: HikerAPI — AU Enrichment / Non-AU Discovery + Enrichment (SLOW)
-- `creator_search` → keyword/niche discovery
-- `creator_get` → full profile by internal Hiker ID (recent posts, CDN thumbnails, live stats)
-- `creator_posts` → recent post grid with engagement data
-- **Strength:** Live data Qdrant doesn't have — recent post thumbnails, CDN image links, real-time engagement, story views
-- ⚠️ **WARNING: HikerAPI is slow (~5–15s per call, 45s+ for multi-step flows).** Always warn the user before making multiple calls.
-- **For AU creators — enrichment only:** Use Qdrant for discovery. Use `creator_get` AFTER to fetch live post thumbnails and engagement for shortlisted/top candidates.
-- **For non-AU creators — discovery + enrichment:** Use `creator_search` to find creators, then `creator_get` to enrich each with full profile data.
-- **DO NOT** use `creator_search` for Australian creator discovery — Qdrant is faster and semantically richer.
-- **DO** tell the user when pulling live data: "Fetching live post data — this'll take a moment."
+### Tool: `creator_get` — Full Qdrant profile by Instagram user ID
 
-### Source 3: creator_profile (Instagram Live) — Verification
-- `creator_profile(username)` → real-time Instagram lookup
-- **Use for:** Confirming a creator is still active, current follower count, before pitching
+Looks up a single creator by their Instagram user ID (`user_id` from `creator_search` results). Returns all Qdrant fields including `post_thumbnails` (sparse — not all creators have them).
 
-### Source 4: web_search — Context & Brand Safety
+### Tool: `creator_media` — Live post data (HikerAPI, SLOW)
+- **Strength:** Live data Qdrant doesn't have — recent post thumbnails, CDN image links, real-time engagement
+- ⚠️ **SLOW (~5–15s per call).** Only use for enriching shortlisted top candidates.
+- Tell the user when doing this: "Fetching live post data — this'll take a moment."
+- Pass either `username` or `user_id` (from `creator_search` results)
+
+### Tool: `creator_profile` — Live Instagram profile (HikerAPI)
+- `creator_profile(username)` → real-time lookup by Instagram handle
+- **Use for:** Verifying a specific account is still active, checking current follower count
+
+### Tool: `web_search` — Context & Brand Safety
 - **Use for:** Recent press, brand safety checks, campaign history, trend research, competitor analysis
 
 ### Discovery Flow (recommended)
 
-**For Australian creators (the common case — fast path):**
-1. **Qdrant semantic search** → embed query, search collection, apply follower filters
-2. **Score each result** → assign `blossomScore` (0–100) based on brief fit, include `reasoning`
-3. **Render `:::table` block** → show results immediately
-4. **(Optional enrichment)** Call HikerAPI `creator_get` on top candidates to fetch live post thumbnails — tell the user you're doing this
+**For Australian creators (the common case — fast):**
+1. `creator_search(query, min_followers, max_followers)` → returns Qdrant profiles with engagement_rate
+2. Assign `blossomScore` (0–100) + `reasoning` per creator
+3. Render `:::table` block immediately
+4. *(Optional)* `creator_media(user_id)` on top 2–3 to fetch live posts — tell the user you're doing this
 
-**For non-Australian creators (HikerAPI — warn about latency):**
+**For non-Australian creators (HikerAPI — warn upfront about latency):**
 1. Tell the user: "Searching live Instagram data — this takes a moment..."
-2. **HikerAPI `creator_search`** → discovery by keyword/niche
-3. **HikerAPI `creator_get`** → enrich each result with full profile, posts, CDN images
-4. **Score candidates** → assign `blossomScore` manually
-5. **Render `:::table` block** → show results
+2. `creator_profile(username)` or `web_search` for discovery
+3. `creator_media(username)` for recent posts and engagement
+4. Assign `blossomScore` manually
+5. Render `:::table` block
 
 **Never** run multiple sequential HikerAPI calls silently — always set user expectations upfront.
-**Never** use Qdrant for non-Australian creators — they're not in the database.
+**Never** use `creator_search` for non-Australian creators — they're not in the database.
 
 ---
 
