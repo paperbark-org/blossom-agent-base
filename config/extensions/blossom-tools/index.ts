@@ -352,22 +352,16 @@ export default {
 
         const vector = await embedQuery(query);
 
-        const mustNotClauses: any[] = [
-          // Exclude creators explicitly marked as no longer found on Instagram
-          { key: "no_longer_found", match: { value: true } },
-        ];
-
-        const mustClauses: any[] = [];
+        // Only filter on indexed fields (follower_count is indexed; no_longer_found is not)
+        let filter: Record<string, any> | undefined;
 
         if (min_followers != null || max_followers != null) {
           const range: Record<string, number> = {};
           if (min_followers != null) range.gte = min_followers;
           if (max_followers != null) range.lte = max_followers;
-          mustClauses.push({ key: "follower_count", range });
+          filter = { must: [{ key: "follower_count", range }] };
         }
 
-        const filter: Record<string, any> = { must_not: mustNotClauses };
-        if (mustClauses.length > 0) filter.must = mustClauses;
         const results = await qdrantSearch(vector, Math.min(limit, 50), filter);
 
         if (results.length === 0) {
